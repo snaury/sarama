@@ -294,10 +294,12 @@ func (m *Consumer) fetchMessages(broker *Broker, tps []*consumerTP) []*consumerT
 	request.MinBytes = m.config.MinFetchSize
 	request.MaxWaitTime = m.config.MaxWaitTime
 	for _, tp := range tps {
+		Logger.Println("ADDBLOCK", tp.Topic, tp.Partition)
 		request.AddBlock(tp.Topic, tp.Partition, tp.Offset, tp.FetchSize)
 	}
 
 	response, err := broker.Fetch(m.client.id, request)
+	Logger.Println(response, err)
 
 	select {
 	case <-m.tomb.Dying():
