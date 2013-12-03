@@ -222,14 +222,16 @@ func (m *Consumer) allocator() {
 			m.tomb.Done()
 			return
 		case tp := <-m.waiting:
-			fmt.Println("ALLOCTP", tp.Topic, tp.Partition)
-			err := m.client.RefreshTopicMetadata(tp.Topic)
-			fmt.Println("ALLOCTP2", err)
-			if err != nil {
-				m.sendError("", -1, err)
-				m.delayReenqueue(tp, 500*time.Millisecond)
-				continue
-			}
+
+			/* fmt.Println("ALLOCTP", tp.Topic, tp.Partition) */
+			/* err := m.client.RefreshTopicMetadata(tp.Topic) */
+			/* fmt.Println("ALLOCTP2", err) */
+			/* if err != nil { */
+			/* 	m.sendError("", -1, err) */
+			/* 	m.delayReenqueue(tp, 500*time.Millisecond) */
+			/* 	continue */
+			/* } */
+
 			broker, err := m.client.Leader(tp.Topic, tp.Partition)
 			fmt.Println("ALLOCTP3", broker, err)
 			if err != nil {
