@@ -2,6 +2,7 @@ package sarama
 
 import (
 	"errors"
+	"fmt"
 	"sync"
 	"time"
 
@@ -168,6 +169,7 @@ func (m *Consumer) sendError(topic string, partition int32, err error) bool {
 // If you pass `OffsetMethodEarliest` or `OffsetMethodLatest`, the `offset`
 // parameter is ignored, and you should generally pass -1.
 func (m *Consumer) AddTopicPartition(topic string, partition int32, offsetMethod OffsetMethod, offset int64) (err error) {
+	fmt.Println("CATP", topic, partition)
 
 	switch offsetMethod {
 	case OffsetMethodManual:
