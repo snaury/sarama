@@ -297,10 +297,6 @@ func (bp *brokerProducer) flushIfOverCapacity(maxBufferBytes uint32) {
 func (bp *brokerProducer) flushIfAnyMessages(p *Producer) (shutdownRequired bool) {
 	select {
 	case <-bp.hasMessages:
-		select {
-		case bp.hasMessages <- true:
-		default:
-		}
 		return bp.flush(p)
 	default:
 	}
@@ -312,14 +308,28 @@ func (bp *brokerProducer) flush(p *Producer) (shutdownRequired bool) {
 
 	// only deliver messages for topic-partitions that are not currently being delivered.
 	bp.mapM.Lock()
+	hasMessages := false
 	for tp, messages := range bp.messages {
-		if len(messages) > 0 && p.tryAcquireDeliveryLock(tp) {
-			defer p.releaseDeliveryLock(tp)
-			prb = append(prb, messages...)
-			delete(bp.messages, tp)
+		if len(messages) > 0 {
+			if p.tryAcquireDeliveryLock(tp) {
+				defer p.releaseDeliveryLock(tp)
+				prb = append(prb, messages...)
+				delete(bp.messages, tp)
+			} else {
+				hasMessages = true
+			}
 		}
 	}
 	bp.mapM.Unlock()
+
+	if hasMessages {
+		// There are some messages that cannot be flushed
+		// Signal hasMessages for someone else
+		select {
+		case bp.hasMessages <- true:
+		default:
+		}
+	}
 
 	if len(prb) > 0 {
 		bp.mapM.Lock()
