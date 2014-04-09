@@ -242,7 +242,6 @@ func (p *Producer) newBrokerProducer(broker *Broker) *brokerProducer {
 				if shutdownRequired = bp.flush(p); shutdownRequired {
 					goto shutdown
 				}
-				bp.flush(p)
 			case <-timer.C:
 				if shutdownRequired = bp.flushIfAnyMessages(p); shutdownRequired {
 					goto shutdown
