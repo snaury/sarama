@@ -40,3 +40,16 @@ func (r *OffsetCommitResponse) decode(pd packetDecoder) (err error) {
 
 	return nil
 }
+
+func (r *OffsetCommitResponse) GetError(topic string, partition int32) (KError, bool) {
+	if r.Errors == nil {
+		return Unknown, false
+	}
+
+	if r.Errors[topic] == nil {
+		return Unknown, false
+	}
+
+	err, ok := r.Errors[topic][partition]
+	return err, ok
+}

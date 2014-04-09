@@ -13,6 +13,10 @@ const (
 	// OffsetMethodOldest causes the consumer to start at the oldest available offset, as
 	// determined by querying the broker.
 	OffsetMethodOldest
+	// OffsetMethodCommitted causes the consumer to start at the last committed offset, as
+	// determined by querying the broker. This is equivalent to OffsetMethodOldest in case
+	// no offset was previously committed.
+	OffsetMethodCommitted
 )
 
 // ConsumerConfig is used to pass multiple configuration options to NewConsumer.
@@ -136,6 +140,11 @@ func NewConsumer(client *Client, topic string, partition int32, group string, co
 		if err != nil {
 			return nil, err
 		}
+	case OffsetMethodCommitted:
+		c.offset, _, err = c.fetchOffset(true)
+		if err != nil {
+			return nil, err
+		}
 	default:
 		return nil, ConfigurationError("Invalid OffsetMethod")
 	}
@@ -148,6 +157,13 @@ func NewConsumer(client *Client, topic string, partition int32, group string, co
 // Events returns the read channel for any events (messages or errors) that might be returned by the broker.
 func (c *Consumer) Events() <-chan *ConsumerEvent {
 	return c.events
+}
+
+// Commit offset for the consumer group. The next time consumer in this group is restarted it
+// will start fetching from the offset specified. This should be offset of the last fully
+// processed message plus one.
+func (c *Consumer) Commit(offset int64, metadata string) error {
+	return c.commitOffset(offset, metadata, true)
 }
 
 // Close stops the consumer from fetching messages. It is required to call this function before
@@ -341,4 +357,112 @@ func (c *Consumer) getOffset(where OffsetTime, retry bool) (int64, error) {
 	}
 
 	return -1, block.Err
+}
+
+func (c *Consumer) fetchOffset(retry bool) (int64, string, error) {
+	request := &OffsetFetchRequest{
+		ConsumerGroup: c.group,
+	}
+	request.AddPartition(c.topic, c.partition)
+
+	response, err := c.broker.FetchOffset(c.client.id, request)
+	switch err {
+	case nil:
+		break
+	case EncodingError:
+		return -1, "", err
+	default:
+		if !retry {
+			return -1, "", err
+		}
+		Logger.Printf("Unexpected error processing OffsetFetchRequest; disconnecting broker %s: %s\n", c.broker.addr, err)
+		c.client.disconnectBroker(c.broker)
+		c.broker, err = c.client.Leader(c.topic, c.partition)
+		if err != nil {
+			return -1, "", err
+		}
+		return c.fetchOffset(false)
+	}
+
+	block := response.GetBlock(c.topic, c.partition)
+	if block == nil {
+		return -1, "", IncompleteResponse
+	}
+
+	switch block.Err {
+	case NoError:
+		return block.Offset, block.Metadata, nil
+	case UnknownTopicOrPartition, NotLeaderForPartition, LeaderNotAvailable:
+		if !retry {
+			if block.Err == UnknownTopicOrPartition {
+				// This may mean there's no offset committed
+				// Try starting from earliest offset
+				offset, err := c.getOffset(EarliestOffset, false)
+				return offset, "", err
+			}
+			return -1, "", block.Err
+		}
+		err = c.client.RefreshTopicMetadata(c.topic)
+		if err != nil {
+			return -1, "", err
+		}
+		c.broker, err = c.client.Leader(c.topic, c.partition)
+		if err != nil {
+			return -1, "", err
+		}
+		return c.fetchOffset(false)
+	}
+
+	return -1, "", block.Err
+}
+
+func (c *Consumer) commitOffset(offset int64, metadata string, retry bool) error {
+	request := &OffsetCommitRequest{
+		ConsumerGroup: c.group,
+	}
+	request.AddBlock(c.topic, c.partition, offset, metadata)
+
+	response, err := c.broker.CommitOffset(c.client.id, request)
+	switch err {
+	case nil:
+		break
+	case EncodingError:
+		return err
+	default:
+		if !retry {
+			return err
+		}
+		Logger.Printf("Unexpected error processing OffsetCommitRequest; disconnecting broker %s: %s\n", c.broker.addr, err)
+		c.client.disconnectBroker(c.broker)
+		c.broker, err = c.client.Leader(c.topic, c.partition)
+		if err != nil {
+			return err
+		}
+		return c.commitOffset(offset, metadata, false)
+	}
+
+	kerr, ok := response.GetError(c.topic, c.partition)
+	if !ok {
+		return IncompleteResponse
+	}
+
+	switch kerr {
+	case NoError:
+		return nil
+	case UnknownTopicOrPartition, NotLeaderForPartition, LeaderNotAvailable:
+		if !retry {
+			return kerr
+		}
+		err = c.client.RefreshTopicMetadata(c.topic)
+		if err != nil {
+			return err
+		}
+		c.broker, err = c.client.Leader(c.topic, c.partition)
+		if err != nil {
+			return err
+		}
+		return c.commitOffset(offset, metadata, false)
+	}
+
+	return kerr
 }
